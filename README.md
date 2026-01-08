@@ -1,124 +1,84 @@
-# Dummy Structured SFT Generators
+# Dummy Structured SFT (Synthetic) — Dataset Card
 
-This folder contains two lightweight, dependency‑minimal generators for high‑quality, fully‑synthetic SFT datasets targeting structured outputs (XML/TOML/YAML). All samples are emitted in OpenAI "messages" JSONL format and are strictly validated for syntax.
+High‑quality, fully synthetic SFT datasets for structured output learning. Prompts cover conversion and extraction tasks; answers are deterministically
+serialized and strictly validated for syntax. All samples use OpenAI "messages" JSONL format and end with a single assistant turn containing only the target
+structure.
 
-- `generate_dummy_structured_data.py` — general‑purpose synthetic pack
-- `generate_hard_structured_data.py` — harder, deeply‑nested structures and constraints
+## Summary
+- Focus: XML / TOML / YAML generation from JSON/YAML/CSV/Text and cross‑format conversions.
+- Files:
+  - dummy_structured_sft.jsonl (general pack)
+  - dummy_structured_sft_text_to_xml.jsonl (targeted text→XML)
+  - dummy_structured_sft_hard.jsonl (hard / deeply nested)
+  - dummy_structured_sft_toml_aug.jsonl (TOML強化: ネイティブ型・ネスト・配列テーブル)
+  - sft_toml_focus.jsonl (TOML集中: 既存＋ハードの混合)
 
-Both scripts produce deterministic assistant outputs via handcrafted serializers, then run strict smoke checks (XML/YAML/TOML parsers) before writing JSONL.
+## Tasks and Subcategories
+- XML out: json_to_xml, yaml_to_xml, csv_to_xml, text_to_xml
+- YAML out: xml_to_yaml, text_to_yaml
+- TOML out: json_to_toml, yaml_to_toml, text_to_toml
 
-## Output Schema (per line)
-
-Each line is one JSON object with the following shape:
-
-```
+## Data Fields (per JSONL line)
 {
   "id": "<sha12>",
   "category": "C_XML" | "C_TOML" | "C_YAML",
-  "subcategory": "json_to_xml" | "yaml_to_xml" | "csv_to_xml" | "text_to_xml" | "xml_to_yaml" | "json_to_toml" | "yaml_to_toml" | "text_to_toml" | "text_to_yaml",
+  "subcategory": "...",
   "task": "transform" | "extract",
-  "seed": "dummy" | "dummy_hard",
+  "seed": "dummy" | "dummy_hard" | "toml_aug",
   "messages": [
     {"role": "user", "content": "<prompt>"},
-    {"role": "assistant", "content": "<expected structured output>"}
+    {"role": "assistant", "content": "<target structure only>"}
   ]
 }
+
+## Usage
+from datasets import load_dataset, concatenate_datasets
+ds_general = load_dataset("json", data_files=["dummy_structured_sft.jsonl"], split="train")
+ds_text2xml = load_dataset("json", data_files=["dummy_structured_sft_text_to_xml.jsonl"], split="train")
+ds_hard    = load_dataset("json", data_files=["dummy_structured_sft_hard.jsonl"], split="train")
+ds_toml_aug = load_dataset("json", data_files=["dummy_structured_sft_toml_aug.jsonl"], split="train")
+ds_toml_focus = load_dataset("json", data_files=["sft_toml_focus.jsonl"], split="train")
+
+## TOML強化の趣旨
+- Inline tables の禁止: TOMLの `{ ... }` (inline table) は曖昧性や改行誤用で壊れやすいため使用禁止。
+- ネイティブ型の利用: 数値/真偽値はクォートしない。配列は `[]`、配列テーブルは `[[...]]` を使用。
+- ネスト維持: 階層は `[a.b]` のようなテーブルヘッダで表現し、入れ子構造を明確化。
+- 本強化パック（toml_aug）は、数値・浮動小数・真偽値・配列・ネストを高頻度に含むよう設計。
+
+## 学習プラン（配合・アップサンプル）
+目標: Text→TOML の安定性と render 精度を改善しつつ、json/yaml→TOML の型・構造取り扱いも強化。
+
+推奨配合（エポックあたりの目安比率）:
+- text_to_toml: 40%（hard + toml_aug を主に）
+- json_to_toml: 30%（toml_aug を主に）
+- yaml_to_toml: 30%（toml_aug を主に）
+- その他（XML/YAML 変換）は現行水準を維持
+
+推奨アップサンプル設定（例）:
 ```
-
-- `id`: first 12 chars of SHA‑1 over `prompt + "\n\n" + answer` (stable across runs with same seed).
-- `messages`: always ends with an assistant turn; no explanations, only the target format.
-
-## 1) generate_dummy_structured_data.py
-
-General pack focused on correctness and breadth.
-
-Supported subcategories:
-
-- XML out: `json_to_xml`, `yaml_to_xml`, `csv_to_xml`, `text_to_xml`
-- YAML out: `xml_to_yaml`
-- TOML out: `json_to_toml`, `yaml_to_toml`, `text_to_toml`
-
-Key design points:
-
-- Random small objects of shape `{ "items": [ {key: scalar, ...}, ... ] }` with mixed snake/camel keys.
-- Deterministic serializers:
-  - XML via `xml.etree.ElementTree` (`<root><items><item>...</item></items></root>`)
-  - TOML as array‑of‑tables (`[[items]]`) with safe quoting
-  - YAML via `yaml.safe_dump` if available; otherwise JSON‑like fallback
-- Strict smoke validation per subgroup:
-  - XML → `ET.fromstring`
-  - YAML → `yaml.safe_load` (if PyYAML present)
-  - TOML → `tomllib`/`tomli`. If unavailable, validation for TOML returns True in the general pack.
-
-CLI:
-
+{
+  "json_to_xml": 1.8,
+  "csv_to_xml": 1.4,
+  "yaml_to_xml": 1.8,
+  "text_to_xml": 1.6,
+  "csv_to_json": 1.6,
+  "xml_to_yaml": 1.6,
+  "text_to_yaml": 1.6,
+  "text_to_toml": 2.3,
+  "json_to_toml": 1.8,
+  "yaml_to_toml": 1.8
+}
 ```
-python -m tools.generate_dummy_structured_data \
-  --out outputs/dummy_structured_sft.jsonl \
-  --seed 42 \
-  --n_json_to_xml 300 --n_yaml_to_xml 300 --n_csv_to_xml 0 --n_text_to_xml 0 \
-  --n_xml_to_yaml 150 --n_json_to_toml 150 --n_yaml_to_toml 150 --n_text_to_toml 150
-```
+- 既存の `text_to_toml: 2.0` を 2.3 に引き上げ、json/yaml→toml も 1.8 を付与。
+- 実際のサンプル数に応じて微調整してください（text_to_toml の比率が 35–45% に収まるように）。
 
-Generate a text_to_xml‑only pack (useful for targeted upsampling):
+環境変数例:
+- bash/zsh: `export SFT_UPSAMPLE_RULES='{"json_to_xml":1.8,"csv_to_xml":1.4,"yaml_to_xml":1.8,"text_to_xml":1.6,"csv_to_json":1.6,"xml_to_yaml":1.6,"text_to_yaml":1.6,"text_to_toml":2.3,"json_to_toml":1.8,"yaml_to_toml":1.8}'`
+- PowerShell: `$env:SFT_UPSAMPLE_RULES = '{"json_to_xml":1.8,"csv_to_xml":1.4,"yaml_to_xml":1.8,"text_to_xml":1.6,"csv_to_json":1.6,"xml_to_yaml":1.6,"text_to_yaml":1.6,"text_to_toml":2.3,"json_to_toml":1.8,"yaml_to_toml":1.8}'`
 
-```
-python -m tools.generate_dummy_structured_data \
-  --out outputs/dummy_structured_sft_text_to_xml.jsonl \
-  --n_text_to_xml 800 --n_json_to_xml 0 --n_yaml_to_xml 0 --n_csv_to_xml 0 \
-  --n_xml_to_yaml 0 --n_json_to_toml 0 --n_yaml_to_toml 0 --n_text_to_toml 0
-```
-
-## 2) generate_hard_structured_data.py
-
-Harder pack emphasizing deep nesting, arrays of dicts, mixed scalar types, and explicit constraints in the prompt.
-
-Supported subcategories:
-
-- `json_to_xml`, `xml_to_yaml`, `text_to_toml`, `text_to_yaml`
-
-Key design points:
-
-- "Hard" object generator inserts nested dicts (`dimensions`, `flags`), lists (`tags`, `components`), optional empties, and mixed numeric/string/boolean types.
-- XML serializer is recursive and preserves nesting; lists become repeated `<item>` elements.
-- TOML uses dotted tables for nested dicts and array‑of‑tables for lists of dicts.
-- Validation is strict for all formats; missing validators can be enforced to fail with `--require_validators 1`.
-
-CLI:
-
-```
-python -m tools.generate_hard_structured_data \
-  --out outputs/dummy_structured_sft_hard.jsonl \
-  --seed 42 \
-  --n_json_to_xml 1000 --n_xml_to_yaml 1000 --n_text_to_toml 1000 --n_text_to_yaml 1000
-```
-
-## Prompts and Answers
-
-- Prompts specify conversion or extraction instructions (e.g., "Return ONLY XML").
-- Answers are strictly the target format; no prose.
-
-## Reproducibility
-
-- Set `--seed` to control the random object builder.
-- `id` generation is content‑based; identical inputs produce identical IDs.
-
-## Dependencies
-
-- Always: Python 3.9+ standard libs; `xml.etree.ElementTree`.
-- Optional: `PyYAML` for YAML validation/serialization; `tomllib` (Py3.11+) or `tomli` for TOML validation.
-
-Install helpers:
-
-```
-pip install pyyaml tomli
-```
-
-## File Size and Splitting
-
-JSONL files can grow large. Consider generating separate packs per subtask or uploading multiple JSONL files (e.g., `dummy_structured_sft.jsonl`, `dummy_structured_sft_text_to_xml.jsonl`, `dummy_structured_sft_hard.jsonl`).
+## Generation Process (Provenance)
+- Deterministic serializers for answers (XML/TOML/YAML) with strict validators.
+- Hard/toml_aug packs focus on deep nesting, arrays of dicts, native types, and explicit constraints（inline table禁止 等）。
 
 ## License
-
-Unless otherwise noted, code in this repository and the generated synthetic datasets are provided under the Apache License 2.0 (see `/LICENSE`).
-
+Apache-2.0 (see LICENSE). Fully synthetic; no third‑party content embedded.

@@ -58,8 +58,10 @@ def dict_to_toml(obj: Dict[str, Any]) -> str:
         lines.append("[[items]]")
         for k, v in it.items():
             sval = str(v).replace("\n", " ")
-            # Quote always to be safe
-            lines.append(f"{k} = \"{sval}\"")
+            # Minimal escaping for TOML basic strings
+            sval = sval.replace("\\", "\\\\").replace('"', '\\"')
+            # Quote always (dummy pack); keep syntax strictly valid
+            lines.append(f'{k} = "{sval}"')
         lines.append("")
     return "\n".join(lines).strip() + "\n"
 
@@ -110,8 +112,8 @@ def validate_toml(s: str) -> bool:
             except Exception:
                 _TOML_LOADER = None
     if _TOML_LOADER is None:
-        # If no TOML parser is available, skip strict validation.
-        return True
+        # No parser available -> treat as invalid to avoid poisoning the dataset
+        return False
     try:
         _TOML_LOADER.loads(s)
         return True
@@ -131,8 +133,8 @@ def validate_xml(s: str) -> bool:
 
 def validate_yaml(s: str) -> bool:
     if _yaml is None:
-        # If PyYAML not installed, skip strict YAML validation
-        return True
+        # No parser available -> treat as invalid to avoid poisoning the dataset
+        return False
     try:
         _yaml.safe_load(s)
         return True
@@ -180,6 +182,10 @@ def prompt_xml_to_yaml(xml_s: str) -> str:
 def prompt_json_to_toml(js: str) -> str:
     return (
         "Convert the following JSON into TOML.\n"
+        "Constraints:\n"
+        "- Use dotted tables and arrays-of-tables where appropriate.\n"
+        "- Do NOT use TOML inline tables (curly braces like { ... }).\n"
+        "- Use native TOML types: numbers/bools unquoted.\n"
         "Return ONLY TOML.\n\nJSON:\n" + js
     )
 
@@ -187,6 +193,10 @@ def prompt_json_to_toml(js: str) -> str:
 def prompt_yaml_to_toml(yml: str) -> str:
     return (
         "Convert the following YAML into TOML.\n"
+        "Constraints:\n"
+        "- Use dotted tables and arrays-of-tables where appropriate.\n"
+        "- Do NOT use TOML inline tables (curly braces like { ... }).\n"
+        "- Use native TOML types: numbers/bools unquoted.\n"
         "Return ONLY TOML.\n\nYAML:\n" + yml
     )
 
@@ -194,6 +204,10 @@ def prompt_yaml_to_toml(yml: str) -> str:
 def prompt_text_to_toml(text: str, attrs: List[str]) -> str:
     return (
         "Extract the following attributes from text and output TOML.\n"
+        "Constraints:\n"
+        "- Use dotted tables and arrays-of-tables where appropriate.\n"
+        "- Do NOT use TOML inline tables (curly braces like { ... }).\n"
+        "- Use native TOML types: numbers/bools unquoted.\n"
         "Return ONLY TOML.\n\nATTRIBUTES:\n"
         + ", ".join(attrs)
         + "\n\nTEXT:\n" + text
@@ -458,6 +472,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="outputs/dummy_structured_sft.jsonl")
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--require_validators", type=int, default=1,
+                    help="If 1, fail when YAML/TOML validators are unavailable")
     ap.add_argument("--n_json_to_xml", type=int, default=300)
     ap.add_argument("--n_yaml_to_xml", type=int, default=300)
     ap.add_argument("--n_csv_to_xml", type=int, default=0)
@@ -470,6 +486,28 @@ def main():
 
     random.seed(args.seed)
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
+
+    # Ensure validators if required
+    if args.require_validators:
+        missing = []
+        if _yaml is None:
+            missing.append("PyYAML")
+        global _TOML_LOADER
+        if _TOML_LOADER is None:
+            try:
+                import tomllib as _tomllib_local  # type: ignore
+                _TOML_LOADER = _tomllib_local
+            except Exception:
+                try:
+                    import tomli as _tomli_local  # type: ignore
+                    _TOML_LOADER = _tomli_local
+                except Exception:
+                    _TOML_LOADER = None
+        if _TOML_LOADER is None:
+            missing.append("tomllib/tomli")
+        if missing:
+            raise RuntimeError(
+                f"Missing validators: {', '.join(missing)}. Install them or pass --require_validators 0.")
 
     rows: List[Dict[str, Any]] = []
     rows += build_json_to_xml(args.n_json_to_xml)

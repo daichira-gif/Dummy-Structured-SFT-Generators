@@ -119,6 +119,8 @@ def p_text_to_toml(text: str, attrs: List[str]) -> str:
         "- Output ONLY the requested attributes (no extra keys).\n"
         "- Preserve key paths and nesting exactly as specified.\n"
         "- Use dotted tables and arrays-of-tables to represent nested objects and lists.\n"
+        "- Do NOT use TOML inline tables (curly braces like { ... }).\n"
+        "- Do NOT wrap values in JSON/HCL-style objects. Use [tables] / [[tables]] only.\n"
         "Return ONLY TOML.\n\nATTRIBUTES:\n"
         + ", ".join(attrs)
         + "\n\nTEXT:\n" + text
@@ -223,7 +225,8 @@ def dict_to_xml_recursive(obj: Any, root_name: str = "root") -> str:
 
     def build(parent, x):
         if isinstance(x, dict):
-            for k in sorted(x.keys()):
+            # preserve insertion order to minimize evaluation mismatches
+            for k in x.keys():
                 tag = _xml_sanitize_tag(str(k))
                 child = _ET.SubElement(parent, tag)
                 build(child, x[k])
